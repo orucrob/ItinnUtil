@@ -14,7 +14,7 @@ class DOForm {
       });
       storage.onIdChange.listen((StoreChange dbChange){
         if(item!=null && dbChange.oldId == item.Id){
-          ItinnUtilContext.instance.LOG.fine("Updating item behind form, because id has been changed. $this ${dbChange.oldId}");
+          ItinnUtilContext.instance.LOG.finest("Updating item behind form, because id has been changed. $this ${dbChange.oldId}");
           storage.getById(dbChange.newId).then((dbItem){
             item.merge(dbItem);
           });
@@ -38,7 +38,7 @@ class DOForm {
 
   void applyDbChanges(GeneralDO dbItem){
       item.merge(dbItem);
-      ItinnUtilContext.instance.LOG.fine("Updating item behind form, because it was changed. $this $dbItem");
+      ItinnUtilContext.instance.LOG.finest("Updating item behind form, because it was changed. $this $dbItem");
   }
   void applyModelChanges(records){
     deferSave();
@@ -47,7 +47,7 @@ class DOForm {
   int _deferSaveTime = 1000;
   Timer _saveTimer;
   //save item related to this form
-  Future deferSave(){
+  void deferSave(){
     if(_saveTimer!=null && _saveTimer.isActive){
       _saveTimer.cancel();
     }

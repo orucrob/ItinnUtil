@@ -17,13 +17,16 @@ class Initialization{
     return ctx.storage.getSett(ctx:ctx).then((sett){
        ctx.moreAnim = sett.moreAnimations;
        ctx.offlineMode = sett.offline;
+       ctx.i18n.locale = sett.lang == null ? ctx.i18n.defaultLocale : sett.lang;
+       ctx.mask.setLocale(ctx.i18n.locale );//TODO not a good idea
+       initializeDateFormatting(null, null);
     });
   }
   ///set server mode and initialize server user and server data
   Future<InitServerStatus> initServer(){
     LOG.finest('Init server starting. ServerMode:${ctx.serverMode}');
     return ctx.storage.getSett().then((sett){
-      ctx.serverMode = (sett.me!=null && sett.me.LoginID!=null) || sett.token!=null;
+      ctx.serverMode = (sett.me!=null && sett.me.Id!=null) || sett.token!=null;
       if(ctx.serverMode){
         LOG.finest('starting initialization of server. ServerMode:${ctx.serverMode}');
         //init server side
@@ -99,14 +102,14 @@ class Initialization{
     var c = new Completer<bool>();
     ctx.server.sync(processErrors:processErrors).then((resp){
       if(resp.success){
-        ctx.mask.mask(maskIcon: MaskIcon.INFO, text: 'Done!');
+        ctx.mask.mask(maskIcon: MaskIcon.INFO, text: ctx.i18n["iu.sync.ok"]);
         c.complete(true);
       }else if(resp.recoverySuccess){
-        ctx.mask.mask(maskIcon: MaskIcon.INFO, mode:MaskMode.OK, text: 'Check your changes, please!').then((_){
+        ctx.mask.mask(maskIcon: MaskIcon.INFO, mode:MaskMode.OK, text: ctx.i18n["iu.sync.recoveryok"]).then((_){
           c.complete(true);
         });
       }else{
-        ctx.mask.mask(maskIcon: MaskIcon.ERROR, mode:MaskMode.OK ,text: 'Error while saving!').then((_){
+        ctx.mask.mask(maskIcon: MaskIcon.ERROR, mode:MaskMode.OK ,text: ctx.i18n["iu.sync.recoveryfailed"]).then((_){
           c.complete(true);
         });
       }
@@ -149,10 +152,10 @@ class Initialization{
   Future<InitServerStatus> initServerUser(){
     var c = new Completer<InitServerStatus>();
     ctx.storage.storeSett.getSett().then((sett){
-      var loginId = "";
-      if(sett.me!=null){
-        loginId = sett.me.LoginID;
-      }
+//      var loginId = "";
+//      if(sett.me!=null){
+//        loginId = sett.me.LoginID;
+//      }
 
       if(!ctx.offlineMode){
         ctx.server.common.syncMe().then((meDO){

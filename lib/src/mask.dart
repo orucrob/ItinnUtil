@@ -2,11 +2,12 @@ part of itinnutil;
 
 abstract class Mask{
   Future<MaskComplete> maskWithMsg (List<MaskMsg> msg);
-  Future<MaskComplete> mask ({MaskIcon maskIcon, String text:'loading...', MaskMode mode});
-  Future umMaskDefer({int wait: 500, MaskComplete completeStatus});
+  Future<MaskComplete> mask ({MaskIcon maskIcon, String text:'loading...', MaskMode mode, bool unMaskDefer: false});
+  Future unMaskDefer({int wait: 500, MaskComplete completeStatus});
   Future unMaskDeferNoBtt({int wait: 500, MaskComplete completeStatus});
   Future unMaskNoBtt([MaskComplete completeStatus]);
   Future unMask([MaskComplete completeStatus ]);
+  void setLocale(String locale);
 }
 
 class MaskIcon extends Object{

@@ -8,6 +8,7 @@ import 'dart:math';
 //import 'dart:typed_data';
 import 'dart:html_common';
 import 'package:intl/intl.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:logging/logging.dart';
 
 @MirrorsUsed(targets: 'MaskMode,MaskIcon')
@@ -55,6 +56,7 @@ part "src/appcache.dart";
 part "src/mask.dart";
 //part "app/roleutil.dart";
 part "src/util.dart";
+part "src/i18n.dart";
 
 
 //part "app.dart";
@@ -77,11 +79,14 @@ class ItinnUtilContext {
 
   ItinnUtilContext();
 
+  ///access to localized messages
+  final ItinnI18n i18n = new ItinnI18n._();
+
   ///logger for library
   Logger LOG = new Logger('itinnutil');
 
   ///name of DB
-  String dbName = "itinnDb2";
+  String dbName = "itinnDb";
 
   ///common data control object
   StorageCtrl storage;
@@ -106,7 +111,11 @@ class ItinnUtilContext {
 //  static const bool DEBUG = true;
   //final String SERVER = "http://192.168.1.20:8080";
   //final String SERVER = "http://192.168.22.170:8080";
-  final String SERVER = "..";
+  //final String SERVER = "http://2.itinngoapps.appspot.com";
+  //final String SERVER = "http://localhost:8080";
+  final String SERVER = "";
+  //final String SERVER = "http://192.168.22.170:8000";
+  //final String SERVER = "http://192.168.1.11:8000";
 
   DivElement uiLogEl;
   DivElement statusEl;

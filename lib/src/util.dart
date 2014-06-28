@@ -2,6 +2,12 @@ part of itinnutil;
 
 class Util{
 
+  /*
+   * In accordance with ISO 8601
+   * a week starts with Monday, which has the value 1.
+   */
+  static int weekStart = 1;
+
   ///get random string
   static String randomStrings(num length) {
     var rnd = new Random();
@@ -92,6 +98,10 @@ class Util{
     if(d==null) return d;
     return d.subtract(new Duration(microseconds: d.millisecond, seconds: d.second, minutes: d.minute, hours: d.hour));
   }
+  static DateTime startOfWeek(DateTime d){
+    if(d==null) return d;
+    return d.subtract(new Duration(days: d.weekday>=weekStart ? d.weekday-weekStart: 7-(weekStart-d.weekday), microseconds: d.millisecond, seconds: d.second, minutes: d.minute, hours: d.hour));
+  }
 
   static Future show(Element el){
     var c = new Completer();
@@ -103,7 +113,7 @@ class Util{
         c.complete();
       });
 
-      //});
+//      });
     }
     return c.future;
   }
@@ -148,3 +158,18 @@ class Util{
 
 }
 
+class UiDateTimeTrans{
+  //TRANSFORMERS
+  @reflectable String uiDateTime(int d){
+    return Util.toUIDateTime(d);
+  }
+  @reflectable String uiDate(int d){
+    return Util.toUIDate(d);
+  }
+  @reflectable String uiTime(int d){
+    return Util.toUITime(d);
+  }
+  @reflectable String uiShortDate(int d){
+    return Util.toUIShortDate(d);
+  }
+}

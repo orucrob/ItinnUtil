@@ -1,14 +1,19 @@
 part of itinnutil;
 
-class UsersServer extends SyncServer{
+class UsersServer extends MultiSyncServer{
 
   UsersServer():super(){
-    store = ctx.storage.storeUser;
+    stores = {"user":ctx.storage.storeUser};
     syncUrl = ctx.SERVER +"/api/user/sync";
   }
 
-  UserDO fromJsonMap(Map userMap){
-    return UserDO.fromJsonMap(userMap);
+  UserDO fromJsonMap(Map userMap, String prefix){
+    if(prefix=="user"){
+      return UserDO.fromJsonMap(userMap);
+    }else{
+      LOG.severe('!!!Error: Wrong prefix while getting DO from MAP in UsersServer. prefix: $prefix');
+      return null;
+    }
   }
 }
 

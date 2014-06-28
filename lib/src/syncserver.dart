@@ -121,6 +121,7 @@ abstract class MultiSyncServer extends Server{
 
    ///MAIN sync process
   Future<OperationResponse> sync({bool processErrors : true, bool partOfRecovery: false}){
+    LOG.finest('SYNC - ######################### Start.');
     var c = new Completer<OperationResponse>();
 
     var versions = new Map<String, int>();
@@ -134,6 +135,7 @@ abstract class MultiSyncServer extends Server{
     Future f = new Future.value();
 
     if(ctx!=null) ctx.status("Preparing data to send.");
+    LOG.finest("SYNC MAIN: Preparing data to send.");
     //GET VERSION
     stores.forEach((prefix,store){
       f = f.then((_){
@@ -152,6 +154,7 @@ abstract class MultiSyncServer extends Server{
     //SYNC
     f = f.then((_){
       if(ctx!=null) ctx.status("Sending data.");
+      LOG.finest("SYNC MAIN: Sending data.");
       return _sync(syncUrl, toSave, versions).then((r){
         resp = r;
       });
@@ -159,6 +162,7 @@ abstract class MultiSyncServer extends Server{
     //PROCESS response
     f = f.then((_){
       if(ctx!=null) ctx.status("Received response.");
+      LOG.finest("SYNC MAIN: Received response.");
       return processResponse(resp, prefixes, toSave, processErrors, recovery:partOfRecovery).then((r){
         opResp = r;
       });
@@ -167,9 +171,12 @@ abstract class MultiSyncServer extends Server{
     //end
     f.then((_){
       if(ctx!=null) ctx.status("Response processed.");
+      LOG.finest("SYNC MAIN: Response processed.");
 
       c.complete(opResp);
       _syncCtrl.add(opResp);
+      LOG.finest('SYNC - ######################### End.');
+
     });
 
 
@@ -216,7 +223,7 @@ abstract class MultiSyncServer extends Server{
     f = f.then((_){
       stores[prefix].isSync(deep: true);
       if(!skipVersion){
-        stores[prefix].version = int.parse("$newVersion", radix:10);
+        stores[prefix].version = newVersion!=null ? int.parse("$newVersion", radix:10) : 0;
       }
     });
 
@@ -232,16 +239,19 @@ abstract class MultiSyncServer extends Server{
   Future<OperationResponse> processResponse(resp, List<String> prefixes, Map<String, List<GeneralDO>> toSave, bool processErrors, {bool recovery:false}){
     var c = new Completer<OperationResponse>();
     if(resp==null || resp.respObj==null || resp.respObj is String || resp.status==0){
+      //OFFLINE
       var response = new OperationResponse();
       response.offline = resp.status==0;
       response.success = false;
       c.complete(response);
     }else{
+      //NOT OFFLINE
       var response = new OperationResponse();
       List<String> batchSignal = new List();
       response.success = resp.success;
       Future f = new Future.value();
-      //batch signal
+
+      //batch signal - store optimalization
       if(!recovery){
         prefixes.forEach((prefix){
           var changed = resp.respObj['${prefix}Changed'];
@@ -321,8 +331,11 @@ abstract class MultiSyncServer extends Server{
   Future<OperationResponse> processSyncErrors(OperationResponse resp){
     var c = new Completer<OperationResponse>();
     if(resp!=null && !resp.success && resp.errors!=null && resp.errors.isNotEmpty){
+      var errTxt = ctx.i18n["iu.sync.err"];//"Unable to synchronize!";
+
       var conflict = 0;
       var na = 0;
+      var deleted = 0;
       var general = 0;
       resp.errors.forEach((err){
         if(err.errorStatus == 'EC'){
@@ -331,39 +344,72 @@ abstract class MultiSyncServer extends Server{
         }else if(err.errorStatus == 'ENA'){
           //item not available
           na++;
+        }else if(err.errorStatus == 'ED'){
+          //item deleted
+          deleted++;
         }else{
           general++;
+          errTxt += ctx.i18n.getMessage("iu.sync.err.descGeneral", [err.errorStatus ]);
+
         }
       });
-      var errTxt = "Unable to synchronize!";
       if(conflict>0){
-        errTxt += "<br>$conflict conflict${conflict==1?"":"s"} (Maybe other device changes?)";
+        var postfix = "";//TODO move to i18n
+        if(conflict>1){
+          if(ctx.i18n.locale=='en'){
+            postfix="s";
+          }else if(ctx.i18n.locale=='sk'){
+            if(conflict<5){
+              postfix = "y";
+            }else{
+              postfix = "ov";
+            }
+          }
+        }
+        errTxt += ctx.i18n.getMessage("iu.sync.err.desc1", ["$conflict", postfix ]);
       }
       if(na>0){
-        errTxt += "<br>$na data inconsitence${na==1?"":"s"} (Ufff, sorry ;-()";
+        var postfix = "";//TODO move to i18n
+        if(na>1){
+          if(ctx.i18n.locale=='en'){
+            postfix="s";
+          }else if(ctx.i18n.locale=='sk'){
+            if(na<5){
+              postfix = "e";
+            }else{
+              postfix = "í";
+            }
+          }
+        }else{
+          if(ctx.i18n.locale=='sk'){
+            postfix = "a";
+          }
+        }
+        errTxt += ctx.i18n.getMessage("iu.sync.err.desc2", ["$na", postfix ]);
       }
-      if(general>0){
-        errTxt += "<br>$general not available${general==1?"":"s"} (Maybe other device deletions?)";
+      if(deleted>0){
+        errTxt += ctx.i18n.getMessage("iu.sync.err.desc3", ["$deleted" ]);
+//        errTxt += "<br>$general not available${general==1?"":"s"} (Maybe other device deletions?)";
       }
       ctx.mask.mask(
           maskIcon: MaskIcon.ERROR,
-          text:'$errTxt <br>Perform recovery? ' ,
+          text:'$errTxt ${ctx.i18n["iu.sync.err.recovery.q"]} ' ,
           mode: MaskMode.YESNO).then((resp3){
         if(resp3 == MaskComplete.YES){
           //if yes
-          ctx.mask.mask(text: 'Recovering data from server...');
+          ctx.mask.mask(text: ctx.i18n['iu.sync.recovery.progress']);
           recovery(processErrors: false).then((OperationResponse resp2){
             if(resp2.success){
               //ok
-              ctx.mask.mask(maskIcon: MaskIcon.INFO, text: 'Recovery done.');
-              ctx.mask.umMaskDefer().then((_){
+              ctx.mask.mask(maskIcon: MaskIcon.INFO, text: ctx.i18n['iu.sync.recovery.done']);
+              ctx.mask.unMaskDefer().then((_){
                 resp.recoverySuccess = true;
                 resp.recoveryErrors = resp2.errors;
                 c.complete(resp);
               });
             }else{
               //notok
-              ctx.mask.mask(maskIcon: MaskIcon.ERROR, text: 'Recovery failed.', mode:MaskMode.OK).then((_){
+              ctx.mask.mask(maskIcon: MaskIcon.ERROR, text: ctx.i18n['iu.sync.recovery.failed'], mode:MaskMode.OK).then((_){
                 resp.recoverySuccess = false;
                 resp.recoveryErrors = resp2.errors;
                 c.complete(resp);
@@ -381,6 +427,7 @@ abstract class MultiSyncServer extends Server{
 
   ///MAIN recovery process
   Future<OperationResponse> recovery({bool processErrors : false}){
+    LOG.finest('RECOVERY - ######################### Start.');
     var c = new Completer<OperationResponse>();
     Future f = new Future.value(true);
     stores.forEach((prefix, store){
@@ -396,7 +443,10 @@ abstract class MultiSyncServer extends Server{
     });
     f = f.then((ok){
       if(ok){
-        return sync(processErrors:processErrors, partOfRecovery: true);
+        return sync(processErrors:processErrors, partOfRecovery: true).then((val){
+          LOG.finest('RECOVERY - ######################### End.');
+          return val;
+        });
       }else{
         var resp = new OperationResponse()..success = false..recoverySuccess=false;
         return resp;
@@ -597,339 +647,370 @@ abstract class MultiSyncServer extends Server{
   }
 }
 
-
-/**
- * SYNC STORE
- */
-abstract class SyncServer extends Server{
-
-  Stream<OperationResponse> onSync;
-  StreamController<OperationResponse> _syncCtrl;
-
-  SyncStorage store;
-  GeneralDO fromJsonMap(Map jsonMap);
-  String syncUrl;
-
-  SyncServer({this.store, this.syncUrl}):super(){
-    _syncCtrl = new StreamController();
-    onSync = _syncCtrl.stream.asBroadcastStream();
-  }
-
-   ///MAIN sync process
-  Future<OperationResponse> sync({bool processErrors : true, bool partOfRecovery: false}){
-    var c = new Completer<OperationResponse>();
-    //GET VERSION
-    store.getVersion(deep: true).then((version){
-      //PREPARE DATA
-      prepareSyncData().then((toSave){
-        _sync(syncUrl, toSave, version).then((resp){
-          if(resp==null || resp.respObj==null || resp.respObj is String || resp.status==0){
-            var response = new OperationResponse();
-            //TODO provide explanations like offline and so on..
-            response.offline = resp.status==0;
-            response.success = false;
-            c.complete(response);
-            _syncCtrl.add(response);
-          }else{
-            var response = new OperationResponse();
-            response.success = resp.success;
-            if(resp.success){
-              var newVersion = resp.respObj['Version'];
-              //ignore status, because response is success = everything is OK
-              //CHANGED
-              var changed = resp.respObj['Changed'];
-
-              //batch signal
-              bool batchSignal=false;
-              if(!partOfRecovery){
-                  if(changed!=null && changed.length>10){
-                    batchSignal =true;
-                    store.batchStartCtrl.add(true);
-                  }
-              }
-
-
-              _processChanges(changed).then((_){
-                //AllIDs
-                var allIDs = resp.respObj['AllIDs'];
-                _processAllIDS(allIDs).then((_){
-                  //FINAL clean
-                  store.isSync(deep: true);
-                  store.version = int.parse("$newVersion", radix:10);
-                  if(batchSignal){
-                    store.batchEndCtrl.add(true);
-                  }
-                  c.complete(response);
-                  _syncCtrl.add(response);
-                });
-              });
-            }else{
-              var newVersion = resp.respObj['Version'];
-              //CHANGED
-              var statusMap = resp.respObj['Status'];
-              var changed = resp.respObj['Changed'];
-              //proces only those with OK status
-              var changedOK = new List();
-              response.errors = new List();
-              if(toSave!=null){
-                toSave.forEach((item){
-                  if(statusMap!=null && statusMap[item.SyncId]!=null && statusMap[item.SyncId].startsWith('E')){
-                    //ERROR
-                    var err = new ErrorSyncDesc();
-                    err.errorStatus = statusMap[item.SyncId];
-                    err.localItem = item;
-                    response.errors.add(err);
-                    if(changed!=null){
-                      changed.forEach((itemMap){
-                        if(item.Id == itemMap['Id'] || item.SyncId == itemMap['SyncId']){
-                          err.serverItem = itemMap;
-                        }else{
-                          changedOK.add(itemMap);
-                        }
-                      });
-                    }                }
-                });
-              }
-
-              _processChanges(changedOK).then((_){
-                //AllIDs
-                var allIDs = resp.respObj['AllIDs'];
-                if(allIDs!=null){ //TODO overit, ze ked je uplna chyba, tak allIDS je null, ked je empty, tak to znamena, ze je OK, ale user nema data
-                  //add IDs that were not successfully synchronized (prevent deletion)
-                  response.errors.forEach((err){
-                    if(!allIDs.contains(err.localItem.Id)){
-                      allIDs.add(err.localItem.Id);
-                    }
-                  });
-                  _processAllIDS(allIDs).then((_){
-                    //store.version = int.parse("$newVersion", radix:10); //TODO is ok to set new version if errors?
-                    if(processErrors){
-                      processSyncErrors(response).then((recoveryResp){
-                        //FINAL clean
-                        store.isSync(deep: true);
-                        c.complete(recoveryResp);
-                        _syncCtrl.add(recoveryResp);
-
-                      });
-                    }else{
-                      //FINAL clean
-                      store.isSync(deep: true);
-                      c.complete(response);
-                      _syncCtrl.add(response);
-
-                    }
-                  });
-                }else{
-                  c.complete(response);
-                  _syncCtrl.add(response);
-                }
-              });
-            }
-          }
-        });
-      });
-    });
-    return c.future;
-  }
-
-
-  Future<OperationResponse> processSyncErrors(OperationResponse resp){
-    var c = new Completer<OperationResponse>();
-    if(resp!=null && !resp.success && resp.errors!=null && resp.errors.isNotEmpty){
-      var conflict = 0;
-      var na = 0;
-      var general = 0;
-      resp.errors.forEach((err){
-        if(err.errorStatus == 'EC'){
-          //conflict
-          conflict++;
-        }else if(err.errorStatus == 'ENA'){
-          //item not available
-          na++;
-        }else{
-          general++;
-        }
-      });
-      var errTxt = "Unable to synchronize!";
-      if(conflict>0){
-        errTxt += "<br>$conflict conflict${conflict==1?"":"s"} (Maybe other device changes?)";
-      }
-      if(na>0){
-        errTxt += "<br>$na data inconsitence${na==1?"":"s"} (Ufff, sorry ;-()";
-      }
-      if(general>0){
-        errTxt += "<br>$general not available${general==1?"":"s"} (Maybe other device deletions?)";
-      }
-      ctx.mask.mask(
-          maskIcon: MaskIcon.ERROR,
-          text:'$errTxt <br>Perform recovery? ' ,
-          mode: MaskMode.YESNO).then((resp3){
-        if(resp3 == MaskComplete.YES){
-          //if yes
-          ctx.mask.mask(text: 'Recovering data from server...');
-          recovery(processErrors: false).then((OperationResponse resp2){
-            if(resp2.success){
-              //ok
-              ctx.mask.mask(maskIcon: MaskIcon.INFO, text: 'Recovery done.');
-              ctx.mask.umMaskDefer().then((_){
-                resp.recoverySuccess = true;
-                resp.recoveryErrors = resp2.errors;
-                c.complete(resp);
-              });
-            }else{
-              //notok
-              ctx.mask.mask(maskIcon: MaskIcon.ERROR, text: 'Recovery failed.', mode:MaskMode.OK).then((_){
-                resp.recoverySuccess = false;
-                resp.recoveryErrors = resp2.errors;
-                c.complete(resp);
-              });
-            }
-          });
-        }else{
-          resp.recoverySuccess = false;
-          c.complete(resp);
-        }
-      });
-    }
-    return c.future;
-  }
-
-  ///MAIN recovery process
-  Future<OperationResponse> recovery({bool processErrors : false}){
-    var c = new Completer<OperationResponse>();
-    store.batchStartCtrl.add(true);
-    store.clear().then((ok){
-      if(ok){
-        sync(processErrors:processErrors, partOfRecovery: true).then((resp){
-          c.complete(resp);
-          store.batchEndCtrl.add(true);
-        });
-      }else{
-        var resp = new OperationResponse()..success = false..recoverySuccess=false;
-        c.complete(resp);
-        store.batchEndCtrl.add(true);
-      }
-    });
-    return c.future;
-  }
-
-
-  ///1. get not synchronized data
-  Future<List<GeneralDO>> prepareSyncData(){
-    var c = new Completer();
-    store.getAll(inclDeleted:true).then((items){
-      //var childFutures = new List();
-      var toSave = new List();
-      if(items!=null && items.isNotEmpty){
-        //for each child
-        items.forEach((item){
-          if(item.Sync != GeneralDO.SYNC_OK){
-            toSave.add(item);
-          }
-        });
-      }
-      c.complete(toSave);
-    });
-    return c.future;
-  }
-
-  ///3.process changes from sync request
-  Future _processChanges(List<Map> changed){
-    LOG.finest('SYNC - changes - start.');
-    var c = new Completer();
-    if(changed!=null){
-      var childFutures = new List();
-      changed.forEach((itemMap){
-        var id;
-        if(itemMap['SyncId']!=null){
-          id = itemMap['SyncId'];
-        }else{
-          id = itemMap['Id'];
-        }
-
-        var c2 = new Completer();
-        var serverItem = fromJsonMap(itemMap);
-        var f = store.merge(item:serverItem, oldId:id);
-        childFutures.add(f);
-      });
-      Future.wait(childFutures).then((_){
-        LOG.finest('SYNC - changes - done.');
-        c.complete();
-      });
-    }else{
-      c.complete();
-    }
-    return c.future;
-  }
-
-  ///4. process allids from sync request
-  Future _processAllIDS(List<String> allIDs){
-    LOG.finest('SYNC - allids - start.');
-    var c = new Completer();
-    store.getAll(inclDeleted: true).then((items){
-      var childFutures = new List();
-      if(items!=null){
-        //find all to remove
-        var itemsToRemove = new List();
-        items.forEach((item){
-          if(allIDs==null || !allIDs.contains(item.Id)){
-            itemsToRemove.add(item);
-          }else{
-            allIDs.remove(item.Id);
-          }
-        });
-        //remove if found any
-        itemsToRemove.forEach((item){
-          var f = store.remove(item, sync: true);
-          childFutures.add(f);
-        });
-        //final check
-        if(allIDs!=null && allIDs.isNotEmpty){
-          allIDs.forEach((id){
-            LOG.finest('SYNC - allids - PROBLEM - ID:${id} - syncUrl: ${syncUrl}');
-          });
-        }
-      }
-      Future.wait(childFutures).then((_){
-        LOG.finest('SYNC - allids - done.');
-        c.complete();
-      });
-    });
-    return c.future;
-  }
-  ///2. process sync request to server
-  Future<HttpResp> _sync(String url, List<GeneralDO> items, int version, [String method = "POST"]){
-    var data = new SyncReqData();
-    if(items!=null && items.isNotEmpty){
-      items.forEach((item){
-        item.SyncId = item.Id;
-        //create
-        if(item.Sync == GeneralDO.SYNC_CREATE){
-          if(data.create == null){
-            data.create = new List();
-          }
-          item.SyncId = item.Id;
-          data.create.add(item);
-        }
-        //update
-        if(item.Sync == GeneralDO.SYNC_UPDATE){
-          if(data.update == null){
-            data.update = new List();
-          }
-          data.update.add(item);
-        }
-        //delete
-        if(item.Sync == GeneralDO.SYNC_DELETE){
-          if(data.delete == null){
-            data.delete = new List();
-          }
-          data.delete.add(item);
-        }
-      });
-    }
-    data.version = version;
-    var json = data.toJson();
-    return send2Token(url,method:method, data:json);
-  }
-
-}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///**
+// * SYNC STORE
+// */
+//abstract class SyncServer extends Server{
+//
+//  Stream<OperationResponse> onSync;
+//  StreamController<OperationResponse> _syncCtrl;
+//
+//  SyncStorage store;
+//  GeneralDO fromJsonMap(Map jsonMap);
+//  String syncUrl;
+//
+//  SyncServer({this.store, this.syncUrl}):super(){
+//    _syncCtrl = new StreamController();
+//    onSync = _syncCtrl.stream.asBroadcastStream();
+//  }
+//
+//   ///MAIN sync process
+//  Future<OperationResponse> sync({bool processErrors : true, bool partOfRecovery: false}){
+//    var c = new Completer<OperationResponse>();
+//    //GET VERSION
+//    store.getVersion(deep: true).then((version){
+//      //PREPARE DATA
+//      prepareSyncData().then((toSave){
+//        _sync(syncUrl, toSave, version).then((resp){
+//          if(resp==null || resp.respObj==null || resp.respObj is String || resp.status==0){
+//            var response = new OperationResponse();
+//            //TODO provide explanations like offline and so on..
+//            response.offline = resp.status==0;
+//            response.success = false;
+//            c.complete(response);
+//            _syncCtrl.add(response);
+//          }else{
+//            var response = new OperationResponse();
+//            response.success = resp.success;
+//            if(resp.success){
+//              var newVersion = resp.respObj['Version'];
+//              //ignore status, because response is success = everything is OK
+//              //CHANGED
+//              var changed = resp.respObj['Changed'];
+//
+//              //batch signal
+//              bool batchSignal=false;
+//              if(!partOfRecovery){
+//                  if(changed!=null && changed.length>10){
+//                    batchSignal =true;
+//                    store.batchStartCtrl.add(true);
+//                  }
+//              }
+//
+//
+//              _processChanges(changed).then((_){
+//                //AllIDs
+//                var allIDs = resp.respObj['AllIDs'];
+//                _processAllIDS(allIDs).then((_){
+//                  //FINAL clean
+//                  store.isSync(deep: true);
+//                  store.version = int.parse("$newVersion", radix:10);
+//                  if(batchSignal){
+//                    store.batchEndCtrl.add(true);
+//                  }
+//                  c.complete(response);
+//                  _syncCtrl.add(response);
+//                });
+//              });
+//            }else{
+//              var newVersion = resp.respObj['Version'];
+//              //CHANGED
+//              var statusMap = resp.respObj['Status'];
+//              var changed = resp.respObj['Changed'];
+//              //proces only those with OK status
+//              var changedOK = new List();
+//              response.errors = new List();
+//              if(toSave!=null){
+//                toSave.forEach((item){
+//                  if(statusMap!=null && statusMap[item.SyncId]!=null && statusMap[item.SyncId].startsWith('E')){
+//                    //ERROR
+//                    var err = new ErrorSyncDesc();
+//                    err.errorStatus = statusMap[item.SyncId];
+//                    err.localItem = item;
+//                    response.errors.add(err);
+//                    if(changed!=null){
+//                      changed.forEach((itemMap){
+//                        if(item.Id == itemMap['Id'] || item.SyncId == itemMap['SyncId']){
+//                          err.serverItem = itemMap;
+//                        }else{
+//                          changedOK.add(itemMap);
+//                        }
+//                      });
+//                    }                }
+//                });
+//              }
+//
+//              _processChanges(changedOK).then((_){
+//                //AllIDs
+//                var allIDs = resp.respObj['AllIDs'];
+//                if(allIDs!=null){ //TODO overit, ze ked je uplna chyba, tak allIDS je null, ked je empty, tak to znamena, ze je OK, ale user nema data
+//                  //add IDs that were not successfully synchronized (prevent deletion)
+//                  response.errors.forEach((err){
+//                    if(!allIDs.contains(err.localItem.Id)){
+//                      allIDs.add(err.localItem.Id);
+//                    }
+//                  });
+//                  _processAllIDS(allIDs).then((_){
+//                    //store.version = int.parse("$newVersion", radix:10); //TODO is ok to set new version if errors?
+//                    if(processErrors){
+//                      processSyncErrors(response).then((recoveryResp){
+//                        //FINAL clean
+//                        store.isSync(deep: true);
+//                        c.complete(recoveryResp);
+//                        _syncCtrl.add(recoveryResp);
+//
+//                      });
+//                    }else{
+//                      //FINAL clean
+//                      store.isSync(deep: true);
+//                      c.complete(response);
+//                      _syncCtrl.add(response);
+//
+//                    }
+//                  });
+//                }else{
+//                  c.complete(response);
+//                  _syncCtrl.add(response);
+//                }
+//              });
+//            }
+//          }
+//        });
+//      });
+//    });
+//    return c.future;
+//  }
+//
+//  Future<OperationResponse> processSyncErrors(OperationResponse resp){
+//    var c = new Completer<OperationResponse>();
+//    if(resp!=null && !resp.success && resp.errors!=null && resp.errors.isNotEmpty){
+//      var conflict = 0;
+//      var na = 0;
+//      var general = 0;
+//      resp.errors.forEach((err){
+//        if(err.errorStatus == 'EC'){
+//          //conflict
+//          conflict++;
+//        }else if(err.errorStatus == 'ENA'){
+//          //item not available
+//          na++;
+//        }else{
+//          general++;
+//        }
+//      });
+//      var errTxt = ctx.i18n["iu.sync.err"];//"Unable to synchronize!";
+//
+//      if(conflict>0){
+//        var postfix = "";//TODO move to i18n
+//        if(conflict>1){
+//          if(ctx.i18n.locale=='en'){
+//            postfix="s";
+//          }else if(ctx.i18n.locale=='sk'){
+//            if(conflict<5){
+//              postfix = "y";
+//            }else{
+//              postfix = "ov";
+//            }
+//          }
+//        }
+//        errTxt += ctx.i18n.getMessage("iu.sync.err.desc1", ["$conflict", postfix ]);
+//      }
+//      if(na>0){
+//        var postfix = "";//TODO move to i18n
+//        if(na>1){
+//          if(ctx.i18n.locale=='en'){
+//            postfix="s";
+//          }else if(ctx.i18n.locale=='sk'){
+//            if(na<5){
+//              postfix = "e";
+//            }else{
+//              postfix = "í";
+//            }
+//          }
+//        }else{
+//          if(ctx.i18n.locale=='sk'){
+//            postfix = "a";
+//          }
+//        }
+//        errTxt += ctx.i18n.getMessage("iu.sync.err.desc2", ["$na", postfix ]);
+//      }
+//      if(general>0){
+//        errTxt += "<br>$general not available${general==1?"":"s"} (Maybe other device deletions?)";
+//      }
+//
+//
+//      ctx.mask.mask(
+//          maskIcon: MaskIcon.ERROR,
+//          text:'$errTxt ${ctx.i18n["iu.sync.err.recovery.q"]} ' ,
+//          mode: MaskMode.YESNO).then((resp3){
+//        if(resp3 == MaskComplete.YES){
+//          //if yes
+//          ctx.mask.mask(text: ctx.i18n['iu.sync.recovery.progress']);
+//          recovery(processErrors: false).then((OperationResponse resp2){
+//            if(resp2.success){
+//              //ok
+//              ctx.mask.mask(maskIcon: MaskIcon.INFO, text: ctx.i18n['iu.sync.recovery.done']);
+//              ctx.mask.unMaskDefer().then((_){
+//                resp.recoverySuccess = true;
+//                resp.recoveryErrors = resp2.errors;
+//                c.complete(resp);
+//              });
+//            }else{
+//              //notok
+//              ctx.mask.mask(maskIcon: MaskIcon.ERROR, text: ctx.i18n['iu.sync.recovery.failed'], mode:MaskMode.OK).then((_){
+//                resp.recoverySuccess = false;
+//                resp.recoveryErrors = resp2.errors;
+//                c.complete(resp);
+//              });
+//            }
+//          });
+//        }else{
+//          resp.recoverySuccess = false;
+//          c.complete(resp);
+//        }
+//      });
+//    }
+//    return c.future;
+//  }
+//
+//  ///MAIN recovery process
+//  Future<OperationResponse> recovery({bool processErrors : false}){
+//    var c = new Completer<OperationResponse>();
+//    store.batchStartCtrl.add(true);
+//    store.clear().then((ok){
+//      if(ok){
+//        sync(processErrors:processErrors, partOfRecovery: true).then((resp){
+//          c.complete(resp);
+//          store.batchEndCtrl.add(true);
+//        });
+//      }else{
+//        var resp = new OperationResponse()..success = false..recoverySuccess=false;
+//        c.complete(resp);
+//        store.batchEndCtrl.add(true);
+//      }
+//    });
+//    return c.future;
+//  }
+//
+//
+//  ///1. get not synchronized data
+//  Future<List<GeneralDO>> prepareSyncData(){
+//    var c = new Completer();
+//    store.getAll(inclDeleted:true).then((items){
+//      //var childFutures = new List();
+//      var toSave = new List();
+//      if(items!=null && items.isNotEmpty){
+//        //for each child
+//        items.forEach((item){
+//          if(item.Sync != GeneralDO.SYNC_OK){
+//            toSave.add(item);
+//          }
+//        });
+//      }
+//      c.complete(toSave);
+//    });
+//    return c.future;
+//  }
+//
+//  ///3.process changes from sync request
+//  Future _processChanges(List<Map> changed){
+//    LOG.finest('SYNC - changes - start.');
+//    var c = new Completer();
+//    if(changed!=null){
+//      var childFutures = new List();
+//      changed.forEach((itemMap){
+//        var id;
+//        if(itemMap['SyncId']!=null){
+//          id = itemMap['SyncId'];
+//        }else{
+//          id = itemMap['Id'];
+//        }
+//
+//        var c2 = new Completer();
+//        var serverItem = fromJsonMap(itemMap);
+//        var f = store.merge(item:serverItem, oldId:id);
+//        childFutures.add(f);
+//      });
+//      Future.wait(childFutures).then((_){
+//        LOG.finest('SYNC - changes - done.');
+//        c.complete();
+//      });
+//    }else{
+//      c.complete();
+//    }
+//    return c.future;
+//  }
+//
+//  ///4. process allids from sync request
+//  Future _processAllIDS(List<String> allIDs){
+//    LOG.finest('SYNC - allids - start.');
+//    var c = new Completer();
+//    store.getAll(inclDeleted: true).then((items){
+//      var childFutures = new List();
+//      if(items!=null){
+//        //find all to remove
+//        var itemsToRemove = new List();
+//        items.forEach((item){
+//          if(allIDs==null || !allIDs.contains(item.Id)){
+//            itemsToRemove.add(item);
+//          }else{
+//            allIDs.remove(item.Id);
+//          }
+//        });
+//        //remove if found any
+//        itemsToRemove.forEach((item){
+//          var f = store.remove(item, sync: true);
+//          childFutures.add(f);
+//        });
+//        //final check
+//        if(allIDs!=null && allIDs.isNotEmpty){
+//          allIDs.forEach((id){
+//            LOG.finest('SYNC - allids - PROBLEM - ID:${id} - syncUrl: ${syncUrl}');
+//          });
+//        }
+//      }
+//      Future.wait(childFutures).then((_){
+//        LOG.finest('SYNC - allids - done.');
+//        c.complete();
+//      });
+//    });
+//    return c.future;
+//  }
+//  ///2. process sync request to server
+//  Future<HttpResp> _sync(String url, List<GeneralDO> items, int version, [String method = "POST"]){
+//    var data = new SyncReqData();
+//    if(items!=null && items.isNotEmpty){
+//      items.forEach((item){
+//        item.SyncId = item.Id;
+//        //create
+//        if(item.Sync == GeneralDO.SYNC_CREATE){
+//          if(data.create == null){
+//            data.create = new List();
+//          }
+//          item.SyncId = item.Id;
+//          data.create.add(item);
+//        }
+//        //update
+//        if(item.Sync == GeneralDO.SYNC_UPDATE){
+//          if(data.update == null){
+//            data.update = new List();
+//          }
+//          data.update.add(item);
+//        }
+//        //delete
+//        if(item.Sync == GeneralDO.SYNC_DELETE){
+//          if(data.delete == null){
+//            data.delete = new List();
+//          }
+//          data.delete.add(item);
+//        }
+//      });
+//    }
+//    data.version = version;
+//    var json = data.toJson();
+//    return send2Token(url,method:method, data:json);
+//  }
+//
+//}

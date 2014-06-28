@@ -4,7 +4,7 @@ dependencies:
   intl: any
   itinndata:
     path: /home/curo/projects/itinndata
-  logging: any
-  observe: any
+  #logging: any
+  #observe: any
 dev_dependencies:
   unittest: any
